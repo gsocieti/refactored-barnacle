@@ -3,12 +3,14 @@
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
+import { requireAdmin } from '@/lib/auth';
 
 const text = (fd: FormData, key: string) => String(fd.get(key) ?? '').trim();
 
 function refresh() {
   revalidatePath('/');
   revalidatePath('/admin');
+  revalidatePath('/admin/cashier');
 }
 
 export async function login(formData: FormData) {
@@ -79,4 +81,25 @@ export async function deleteMenuItem(formData: FormData) {
   const { error } = await supabase.from('menu_items').delete().eq('id', text(formData, 'id'));
   if (error) throw new Error(error.message);
   refresh();
+}
+
+export async function markOrderPaid(formData: FormData) {
+  await requireAdmin();
+  const id = text(formData, 'id');
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)) {
+    throw new Error('ID pesanan tidak valid');
+  }
+
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from('orders')
+    .update({ payment_status: 'paid', status: 'confirmed' })
+    .eq('id', id)
+    .neq('payment_status', 'paid')
+    .neq('status', 'cancelled')
+    .select('id')
+    .maybeSingle();
+  if (error) throw new Error(`Gagal mengonfirmasi pembayaran: ${error.message}`);
+  if (!data) throw new Error('Pesanan tidak ditemukan atau sudah lunas');
+  revalidatePath('/admin/cashier');
 }

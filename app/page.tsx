@@ -21,12 +21,22 @@ async function getMenu(): Promise<{ categories: Category[]; items: MenuItem[] }>
   }
 }
 
-export default async function Home() {
+export default async function Home({
+  searchParams,
+}: {
+  searchParams: Promise<{ table?: string | string[] }>;
+}) {
   const { categories, items } = await getMenu();
+  const { table } = await searchParams;
+  const tableValue = Array.isArray(table) ? table[0] : table;
+  const parsedTable = tableValue ? Number(tableValue) : null;
+  const tableNumber =
+    parsedTable !== null && Number.isSafeInteger(parsedTable) && parsedTable > 0 ? parsedTable : null;
+  
   return (
     <main>
       <Hero />
-      <MenuCatalog categories={categories} items={items} />
+      <MenuCatalog categories={categories} items={items} tableNumber={tableNumber} />
       <Location />
       <Testimonials />
       <Footer />

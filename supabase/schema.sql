@@ -51,6 +51,8 @@ create table public.orders (
   total_amount integer not null default 0 check (total_amount >= 0),
   payment_status text not null default 'unpaid'
     check (payment_status in ('unpaid', 'pending', 'paid', 'failed', 'refunded')),
+  payment_method text not null default 'cash'
+    check (payment_method in ('cash', 'transfer_bca', 'transfer_bri', 'transfer_mandiri', 'qris', 'gopay', 'ovo', 'dana')),
   created_at timestamptz not null default now()
 );
 
@@ -81,8 +83,8 @@ create policy "admin write menu_items" on public.menu_items for all using (publi
 create policy "public read tables" on public.tables for select using (true);
 create policy "admin write tables" on public.tables for all using (public.is_admin()) with check (public.is_admin());
 
--- Pesanan: admin saja. Di Fase 2, pelanggan membuat pesanan lewat Route Handler
--- (service role) dan payment webhook memperbarui payment_status.
+-- Pesanan: admin saja. Pelanggan membuat pesanan lewat Route Handler (service role);
+-- kasir memverifikasi pembayaran sebelum mengubah payment_status menjadi paid.
 create policy "admin all orders" on public.orders for all using (public.is_admin()) with check (public.is_admin());
 create policy "admin all order_items" on public.order_items for all using (public.is_admin()) with check (public.is_admin());
 
