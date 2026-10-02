@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo, useState, type FormEvent } from 'react';
-import { Minus, Plus, ShoppingBag, UtensilsCrossed, X } from 'lucide-react';
+import { Minus, Plus, Search, ShoppingBag, UtensilsCrossed, X } from 'lucide-react';
 import {
   ORDER_MAX_DISTINCT_ITEMS,
   ORDER_MAX_QUANTITY,
@@ -31,17 +31,22 @@ export default function MenuCatalog({
   tableNumber: number | null;
 }) {
   const [active, setActive] = useState('all');
+  const [search, setSearch] = useState('');
   const [cart, setCart] = useState<Record<string, CartItem>>({});
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('cash');
   const [submitting, setSubmitting] = useState(false);
   const [orderMessage, setOrderMessage] = useState<{ kind: 'success' | 'error'; text: string } | null>(null);
   const tabs = [{ id: 'all', name: 'Semua' }, ...categories.map((c) => ({ id: c.id, name: c.name }))];
+  const normalizedSearch = search.trim().toLocaleLowerCase('id-ID');
   const visible = useMemo(
     () =>
       (active === 'all' ? items : items.filter((i) => i.category_id === active)).toSorted(
         (a, b) => Number(b.is_featured) - Number(a.is_featured),
+      ).filter((item) =>
+        normalizedSearch === '' ||
+        `${item.name} ${item.description ?? ''}`.toLocaleLowerCase('id-ID').includes(normalizedSearch),
       ),
-    [active, items],
+    [active, items, normalizedSearch],
   );
   const cartItems = Object.values(cart);
   const itemCount = cartItems.reduce((sum, entry) => sum + entry.quantity, 0);
@@ -121,7 +126,19 @@ export default function MenuCatalog({
           </p>
         )}
 
-        <div className="scrollbar-none mt-7 flex gap-2 overflow-x-auto pb-2">
+        <label className="mt-7 flex max-w-xl items-center gap-3 rounded-xl border-2 border-kuah bg-white px-4 py-3 focus-within:border-cabai focus-within:outline focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-cabai">
+          <Search size={20} className="shrink-0 text-kuah/60" aria-hidden />
+          <span className="sr-only">Cari menu</span>
+          <input
+            type="search"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Cari nama menu atau deskripsi..."
+            className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-kuah/50"
+          />
+        </label>
+
+        <div className="scrollbar-none mt-4 flex gap-2 overflow-x-auto pb-2">
           {tabs.map((t) => (
             <button
               key={t.id}
@@ -139,7 +156,11 @@ export default function MenuCatalog({
 
         {visible.length === 0 ? (
           <p className="mt-10 rounded-xl border-2 border-dashed border-kuah p-6">
-            Menu belum tersedia untuk kategori ini. Tanyakan langsung lewat WhatsApp di bagian lokasi.
+            {normalizedSearch
+              ? `Menu dengan kata kunci “${search.trim()}” tidak ditemukan. Coba kata kunci lain atau pilih kategori berbeda.`
+              : items.length === 0
+                ? 'Menu belum tersedia. Tanyakan langsung lewat WhatsApp di bagian lokasi.'
+                : 'Menu belum tersedia untuk kategori ini. Tanyakan langsung lewat WhatsApp di bagian lokasi.'}
           </p>
         ) : (
           <ul className="mt-8 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
