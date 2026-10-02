@@ -2,6 +2,12 @@ import Link from 'next/link';
 import AdminNav from '@/components/admin/AdminNav';
 import OrderControls from '@/components/admin/OrderControls';
 import { formatJakartaDateTime } from '@/lib/date-format';
+import {
+  getHistoryDateBounds,
+  ORDER_STATUS_LABELS,
+  parseHistoryRange,
+  type HistoryRange,
+} from '@/lib/order-history';
 import { PAYMENT_METHODS } from '@/lib/types';
 import { createClient } from '@/lib/supabase/server';
 
@@ -10,15 +16,6 @@ const logPageSize = 25;
 
 const rupiah = (amount: number) =>
   new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(amount);
-
-const orderStatus: Record<string, string> = {
-  pending: 'Menunggu',
-  confirmed: 'Dikonfirmasi',
-  preparing: 'Disiapkan',
-  served: 'Disajikan',
-  completed: 'Selesai',
-  cancelled: 'Dibatalkan',
-};
 
 const paymentStatus: Record<string, string> = {
   unpaid: 'Belum dibayar',
@@ -74,7 +71,7 @@ function isAuditUnavailable(error: { code: string; message: string }) {
 function auditValue(field: string, value: unknown) {
   if (value === null || value === undefined) return '-';
   if (field === 'total_amount' && typeof value === 'number') return rupiah(value);
-  if (field === 'status' && typeof value === 'string') return orderStatus[value] ?? value;
+  if (field === 'status' && typeof value === 'string') return ORDER_STATUS_LABELS[value] ?? value;
   if (field === 'payment_status' && typeof value === 'string') return paymentStatus[value] ?? value;
   if (field === 'payment_method' && typeof value === 'string') {
     return PAYMENT_METHODS.find((method) => method.value === value)?.label ?? value;
@@ -86,13 +83,15 @@ function HistoryPagination({
   page,
   pageCount,
   parameter,
+  range,
 }: {
   page: number;
   pageCount: number;
   parameter: 'page' | 'logPage';
+  range: HistoryRange;
 }) {
   if (pageCount < 2) return null;
-  const href = (target: number) => `/admin/history?${parameter}=${target}`;
+  const href = (target: number) => `/admin/history?${parameter}=${target}&range=${range}`;
   return (
     <nav aria-label={parameter === 'page' ? 'Navigasi riwayat transaksi' : 'Navigasi log admin'} className="flex items-center justify-between gap-3">
       {page > 1 ? (
@@ -109,28 +108,32 @@ function HistoryPagination({
 export default async function HistoryPage({
   searchParams,
 }: {
-  searchParams: Promise<{ page?: string; logPage?: string }>;
+  searchParams: Promise<{ page?: string; logPage?: string; range?: string }>;
 }) {
   const params = await searchParams;
   const parsedPage = Number(params.page ?? 1);
   const parsedLogPage = Number(params.logPage ?? 1);
   const page = Number.isSafeInteger(parsedPage) && parsedPage > 0 ? parsedPage : 1;
   const logPage = Number.isSafeInteger(parsedLogPage) && parsedLogPage > 0 ? parsedLogPage : 1;
+  const range = parseHistoryRange(params.range);
+  const bounds = getHistoryDateBounds(range);
   const supabase = await createClient();
 
-  const { count: transactionCount, error: countError } = await supabase
-    .from('orders')
-    .select('id', { count: 'exact', head: true });
+  let countQuery = supabase.from('orders').select('id', { count: 'exact', head: true });
+  if (bounds) countQuery = countQuery.gte('created_at', bounds.start).lt('created_at', bounds.end);
+  const { count: transactionCount, error: countError } = await countQuery;
   if (countError) throw new Error(`Gagal menghitung riwayat transaksi: ${countError.message}`);
   const totalTransactions = transactionCount ?? 0;
   const transactionPageCount = Math.max(1, Math.ceil(totalTransactions / pageSize));
   const transactionOffset = Math.min((page - 1) * pageSize, Math.max(0, totalTransactions - 1));
 
-  const result = await supabase
+  let resultQuery = supabase
     .from('orders')
     .select('id, table_number, status, payment_status, payment_method, total_amount, created_at, order_items(quantity, price_at_time, menu_items(name))')
     .order('created_at', { ascending: false })
     .range(transactionOffset, transactionOffset + pageSize - 1);
+  if (bounds) resultQuery = resultQuery.gte('created_at', bounds.start).lt('created_at', bounds.end);
+  const result = await resultQuery;
   let transactionRows = result.data as HistoryOrder[] | null;
   let paymentMethodAvailable = true;
   let transactionError = result.error;
@@ -140,11 +143,13 @@ export default async function HistoryPage({
     /payment_method/i.test(transactionError.message)
   ) {
     paymentMethodAvailable = false;
-    const fallback = await supabase
+    let fallbackQuery = supabase
       .from('orders')
       .select('id, table_number, status, payment_status, total_amount, created_at, order_items(quantity, price_at_time, menu_items(name))')
       .order('created_at', { ascending: false })
       .range(transactionOffset, transactionOffset + pageSize - 1);
+    if (bounds) fallbackQuery = fallbackQuery.gte('created_at', bounds.start).lt('created_at', bounds.end);
+    const fallback = await fallbackQuery;
     transactionRows = fallback.data as HistoryOrder[] | null;
     transactionError = fallback.error;
   }
@@ -222,12 +227,38 @@ export default async function HistoryPage({
         <div className="flex flex-wrap items-end justify-between gap-2">
           <div>
             <h2 className="font-display text-2xl font-bold">Riwayat transaksi</h2>
-            <p className="text-sm text-kuah/70">{totalTransactions} transaksi tersimpan</p>
+            <p className="text-sm text-kuah/70">{totalTransactions} transaksi dalam rentang terpilih</p>
           </div>
-          <p className="text-sm">Urutan terbaru terlebih dahulu</p>
+          <div className="flex flex-wrap items-end gap-3">
+            <p className="pb-2 text-sm">Urutan terbaru terlebih dahulu</p>
+            <form action="/admin/history" method="get" className="flex flex-wrap items-end gap-2">
+              <label className="text-sm font-semibold">
+                Rentang waktu
+                <select
+                  name="range"
+                  defaultValue={range}
+                  className="mt-1 block rounded-lg border-2 border-kuah bg-white px-3 py-2 font-normal"
+                >
+                  <option value="today">Harian (Hari ini)</option>
+                  <option value="week">Mingguan (Minggu ini)</option>
+                  <option value="month">Bulanan (Bulan ini)</option>
+                  <option value="all">Semua waktu</option>
+                </select>
+              </label>
+              <button type="submit" className="rounded-lg border-2 border-kuah bg-white px-4 py-2 text-sm font-bold">
+                Terapkan
+              </button>
+              <Link
+                href={`/admin/history/export?range=${range}`}
+                className="rounded-lg border-2 border-kuah bg-kuah px-4 py-2 text-sm font-bold text-white"
+              >
+                Export Data
+              </Link>
+            </form>
+          </div>
         </div>
         {transactions.length === 0 ? (
-          <p className="rounded-2xl border-4 border-dashed border-kuah bg-white p-6">Belum ada transaksi.</p>
+          <p className="rounded-2xl border-4 border-dashed border-kuah bg-white p-6">Tidak ada transaksi pada rentang waktu ini.</p>
         ) : (
           <ul className="space-y-3">
             {transactions.map((order) => {
@@ -247,7 +278,7 @@ export default async function HistoryPage({
                         {' · '}{quantity} item · {method?.label ?? order.payment_method ?? 'Metode belum dicatat'}
                       </p>
                       <p className="mt-1 text-sm font-semibold">
-                        Status: {orderStatus[order.status] ?? order.status} · {paymentStatus[order.payment_status] ?? order.payment_status}
+                        Status: {ORDER_STATUS_LABELS[order.status] ?? order.status} · {paymentStatus[order.payment_status] ?? order.payment_status}
                       </p>
                       {approval && (
                         <p className="mt-1 text-sm font-semibold text-green-800">
@@ -280,7 +311,7 @@ export default async function HistoryPage({
             })}
           </ul>
         )}
-        <HistoryPagination page={page} pageCount={transactionPageCount} parameter="page" />
+        <HistoryPagination page={page} pageCount={transactionPageCount} parameter="page" range={range} />
       </section>
 
       <section className="space-y-4 border-t-4 border-kuah/15 pt-6">
@@ -335,6 +366,7 @@ export default async function HistoryPage({
             page={logPage}
             pageCount={Math.max(1, Math.ceil(activityTotal / logPageSize))}
             parameter="logPage"
+            range={range}
           />
         )}
       </section>
