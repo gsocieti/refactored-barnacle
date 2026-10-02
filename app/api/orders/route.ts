@@ -1,6 +1,12 @@
 import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { PAYMENT_METHODS, type PaymentMethod } from '@/lib/types';
+import {
+  ORDER_MAX_DISTINCT_ITEMS,
+  ORDER_MAX_QUANTITY,
+  ORDER_MAX_TOTAL,
+  PAYMENT_METHODS,
+  type PaymentMethod,
+} from '@/lib/types';
 
 const paymentMethodValues = new Set<string>(PAYMENT_METHODS.map((method) => method.value));
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -17,7 +23,12 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Data pesanan tidak valid.' }, { status: 400 });
   }
 
-  if (!isRecord(body) || !Array.isArray(body.items) || body.items.length === 0 || body.items.length > 100) {
+  if (
+    !isRecord(body) ||
+    !Array.isArray(body.items) ||
+    body.items.length === 0 ||
+    body.items.length > ORDER_MAX_DISTINCT_ITEMS
+  ) {
     return NextResponse.json({ error: 'Keranjang pesanan kosong atau tidak valid.' }, { status: 400 });
   }
 
@@ -41,12 +52,12 @@ export async function POST(request: Request) {
       !uuidPattern.test(entry.menuItemId) ||
       !Number.isInteger(entry.quantity) ||
       Number(entry.quantity) < 1 ||
-      Number(entry.quantity) > 99
+      Number(entry.quantity) > ORDER_MAX_QUANTITY
     ) {
       return NextResponse.json({ error: 'Daftar menu atau jumlah pesanan tidak valid.' }, { status: 400 });
     }
     const quantity = (quantities.get(entry.menuItemId) ?? 0) + Number(entry.quantity);
-    if (quantity > 99) {
+    if (quantity > ORDER_MAX_QUANTITY) {
       return NextResponse.json({ error: 'Jumlah setiap menu maksimal 99.' }, { status: 400 });
     }
     quantities.set(entry.menuItemId, quantity);
@@ -76,7 +87,7 @@ export async function POST(request: Request) {
       totalAmount += price * quantity;
       orderItems.push({ menu_item_id: menuItemId, quantity, price_at_time: price });
     }
-    if (!Number.isSafeInteger(totalAmount) || totalAmount > 2147483647) {
+    if (!Number.isSafeInteger(totalAmount) || totalAmount > ORDER_MAX_TOTAL) {
       return NextResponse.json({ error: 'Total pesanan melebihi batas yang dapat diproses.' }, { status: 400 });
     }
 

@@ -23,3 +23,7 @@ export const PAYMENT_METHODS = [
 ] as const;
 
 export type PaymentMethod = (typeof PAYMENT_METHODS)[number]['value'];
+
+export const ORDER_MAX_DISTINCT_ITEMS = 100;
+export const ORDER_MAX_QUANTITY = 99;
+export const ORDER_MAX_TOTAL = 2147483647;

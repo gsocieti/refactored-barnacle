@@ -2,7 +2,15 @@
 
 import { useMemo, useState, type FormEvent } from 'react';
 import { Minus, Plus, ShoppingBag, UtensilsCrossed, X } from 'lucide-react';
-import { PAYMENT_METHODS, type Category, type MenuItem, type PaymentMethod } from '@/lib/types';
+import {
+  ORDER_MAX_DISTINCT_ITEMS,
+  ORDER_MAX_QUANTITY,
+  ORDER_MAX_TOTAL,
+  PAYMENT_METHODS,
+  type Category,
+  type MenuItem,
+  type PaymentMethod,
+} from '@/lib/types';
 
 const rupiah = (n: number) =>
   new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(n);
@@ -40,12 +48,29 @@ export default function MenuCatalog({
   const total = cartItems.reduce((sum, entry) => sum + entry.item.price * entry.quantity, 0);
 
   function changeQuantity(item: MenuItem, amount: number) {
+    const currentQuantity = cart[item.id]?.quantity ?? 0;
+    const nextQuantity = currentQuantity + amount;
+    if (nextQuantity > ORDER_MAX_QUANTITY) {
+      setOrderMessage({ kind: 'error', text: `Maksimal ${ORDER_MAX_QUANTITY} porsi untuk setiap menu.` });
+      return;
+    }
+    if (amount > 0 && currentQuantity === 0 && cartItems.length >= ORDER_MAX_DISTINCT_ITEMS) {
+      setOrderMessage({
+        kind: 'error',
+        text: `Maksimal ${ORDER_MAX_DISTINCT_ITEMS} jenis menu dalam satu pesanan.`,
+      });
+      return;
+    }
+    if (amount > 0 && total + item.price * amount > ORDER_MAX_TOTAL) {
+      setOrderMessage({ kind: 'error', text: 'Total pesanan sudah mencapai batas maksimum.' });
+      return;
+    }
+
     setOrderMessage(null);
     setCart((current) => {
       const next = { ...current };
-      const quantity = (next[item.id]?.quantity ?? 0) + amount;
-      if (quantity <= 0) delete next[item.id];
-      else next[item.id] = { item, quantity };
+      if (nextQuantity <= 0) delete next[item.id];
+      else next[item.id] = { item, quantity: nextQuantity };
       return next;
     });
   }
@@ -118,47 +143,57 @@ export default function MenuCatalog({
           </p>
         ) : (
           <ul className="mt-8 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
-            {visible.map((item) => (
-              <li
-                key={item.id}
-                className={`group relative flex h-full flex-col overflow-hidden rounded-3xl border border-kuah/10 bg-white pb-20 shadow-[0_8px_28px_-20px_rgba(59,34,22,0.5)] transition duration-300 hover:-translate-y-1 hover:shadow-[0_18px_36px_-20px_rgba(59,34,22,0.32)] ${item.is_available ? '' : 'opacity-60'}`}
-              >
-                <div className="relative flex aspect-[4/3] items-center justify-center overflow-hidden bg-mie">
-                  {item.image_url || item.name === 'Yamin Spesial Karet' ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={item.image_url || '/yamin-spesial-karet.jpeg'} alt={item.name} loading="lazy" className="h-full w-full object-cover transition duration-500 group-hover:scale-105" />
-                  ) : (
-                    <UtensilsCrossed size={38} className="text-cabai/70" aria-hidden />
-                  )}
-                  {item.is_featured && (
-                    <span className="absolute left-3 top-3 rounded-full bg-cabai px-3 py-1 text-xs font-extrabold uppercase tracking-wider text-white shadow-sm">Favorit</span>
-                  )}
-                  {!item.is_available && (
-                    <span className="absolute right-3 top-3 rounded-full bg-kuah px-3 py-1 text-xs font-extrabold uppercase tracking-wider text-white">Habis</span>
-                  )}
-                </div>
-                <div className="flex flex-1 flex-col p-5">
-                  <div className="flex items-start justify-between gap-3">
-                    <h3 className="font-display text-lg font-bold leading-snug">{item.name}</h3>
-                    <p className="shrink-0 rounded-lg bg-mie/60 px-2 py-1 text-sm font-extrabold text-cabai">{rupiah(item.price)}</p>
+            {visible.map((item) => {
+              const quantity = cart[item.id]?.quantity ?? 0;
+              const cannotAdd =
+                !item.is_available ||
+                quantity >= ORDER_MAX_QUANTITY ||
+                (quantity === 0 && cartItems.length >= ORDER_MAX_DISTINCT_ITEMS) ||
+                total + item.price > ORDER_MAX_TOTAL;
+              return (
+                <li
+                  key={item.id}
+                  className={`group relative flex h-full flex-col overflow-hidden rounded-3xl border border-kuah/10 bg-white pb-20 shadow-[0_8px_28px_-20px_rgba(59,34,22,0.5)] transition duration-300 hover:-translate-y-1 hover:shadow-[0_18px_36px_-20px_rgba(59,34,22,0.32)] ${item.is_available ? '' : 'opacity-60'}`}
+                >
+                  <div className="relative flex aspect-[4/3] items-center justify-center overflow-hidden bg-mie">
+                    {item.image_url || item.name === 'Yamin Spesial Karet' ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={item.image_url || '/yamin-spesial-karet.jpeg'} alt={item.name} loading="lazy" className="h-full w-full object-cover transition duration-500 group-hover:scale-105" />
+                    ) : (
+                      <UtensilsCrossed size={38} className="text-cabai/70" aria-hidden />
+                    )}
+                    {item.is_featured && (
+                      <span className="absolute left-3 top-3 rounded-full bg-cabai px-3 py-1 text-xs font-extrabold uppercase tracking-wider text-white shadow-sm">Favorit</span>
+                    )}
+                    {!item.is_available && (
+                      <span className="absolute right-3 top-3 rounded-full bg-kuah px-3 py-1 text-xs font-extrabold uppercase tracking-wider text-white">Habis</span>
+                    )}
                   </div>
-                  {item.description && <p className="mt-2 line-clamp-2 text-sm leading-6 text-kuah/65">{item.description}</p>}
-                  <div className="absolute inset-x-5 bottom-5 flex items-center justify-between gap-3">
-                    <p className="text-sm font-semibold text-kuah/65">
-                      {cart[item.id] ? `${cart[item.id].quantity} di keranjang` : ' '}
-                    </p>
-                    <button
-                      type="button"
-                      onClick={() => changeQuantity(item, 1)}
-                      disabled={!item.is_available}
-                      className="btn border-2 bg-mie px-4 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      <Plus size={17} aria-hidden /> Tambah
-                    </button>
+                  <div className="flex flex-1 flex-col p-5">
+                    <div className="flex items-start justify-between gap-3">
+                      <h3 className="font-display text-lg font-bold leading-snug">{item.name}</h3>
+                      <p className="shrink-0 rounded-lg bg-mie/60 px-2 py-1 text-sm font-extrabold text-cabai">{rupiah(item.price)}</p>
+                    </div>
+                    {item.description && <p className="mt-2 line-clamp-2 text-sm leading-6 text-kuah/65">{item.description}</p>}
+                    <div className="absolute inset-x-5 bottom-5 flex items-center justify-between gap-3">
+                      <p className="text-sm font-semibold text-kuah/65">
+                        {cart[item.id] ? `${cart[item.id].quantity} di keranjang` : ' '}
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => changeQuantity(item, 1)}
+                        disabled={cannotAdd}
+                        aria-label={`Tambah ${item.name}`}
+                        title={cannotAdd ? 'Batas pesanan tercapai atau menu tidak tersedia' : undefined}
+                        className="btn border-2 bg-mie px-4 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        <Plus size={17} aria-hidden /> Tambah
+                      </button>
+                    </div>
                   </div>
-                </div>
-              </li>
-            ))}
+                </li>
+              );
+            })}
           </ul>
         )}
 
@@ -189,7 +224,16 @@ export default function MenuCatalog({
                         {quantity === 1 ? <X size={16} /> : <Minus size={16} />}
                       </button>
                       <span className="min-w-6 text-center font-bold">{quantity}</span>
-                      <button type="button" onClick={() => changeQuantity(item, 1)} aria-label={`Tambah ${item.name}`} className="rounded-lg border-2 border-kuah p-1.5">
+                      <button
+                        type="button"
+                        onClick={() => changeQuantity(item, 1)}
+                        disabled={
+                          quantity >= ORDER_MAX_QUANTITY ||
+                          total + item.price > ORDER_MAX_TOTAL
+                        }
+                        aria-label={`Tambah ${item.name}`}
+                        className="rounded-lg border-2 border-kuah p-1.5 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
                         <Plus size={16} />
                       </button>
                     </div>
