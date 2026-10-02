@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import { requireAdmin } from '@/lib/auth';
+import { PAYMENT_METHODS } from '@/lib/types';
 
 const text = (fd: FormData, key: string) => String(fd.get(key) ?? '').trim();
 
@@ -11,6 +12,7 @@ function refresh() {
   revalidatePath('/');
   revalidatePath('/admin');
   revalidatePath('/admin/cashier');
+  revalidatePath('/admin/history');
 }
 
 export async function login(formData: FormData) {
@@ -91,15 +93,81 @@ export async function markOrderPaid(formData: FormData) {
   }
 
   const supabase = await createClient();
+  await requireOrderAuditLog(supabase);
   const { data, error } = await supabase
     .from('orders')
     .update({ payment_status: 'paid', status: 'confirmed' })
     .eq('id', id)
     .neq('payment_status', 'paid')
+    .neq('payment_status', 'refunded')
     .neq('status', 'cancelled')
     .select('id')
     .maybeSingle();
   if (error) throw new Error(`Gagal mengonfirmasi pembayaran: ${error.message}`);
   if (!data) throw new Error('Pesanan tidak ditemukan atau sudah lunas');
   revalidatePath('/admin/cashier');
+  revalidatePath('/admin/history');
+}
+
+const orderStatuses = ['pending', 'confirmed', 'preparing', 'served', 'completed'] as const;
+const orderIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function validatedOrderId(formData: FormData) {
+  const id = text(formData, 'id');
+  if (!orderIdPattern.test(id)) throw new Error('ID pesanan tidak valid');
+  return id;
+}
+
+async function requireOrderAuditLog(supabase: Awaited<ReturnType<typeof createClient>>) {
+  const { error } = await supabase.from('admin_activity_logs').select('id', { head: true }).limit(1);
+  if (error) {
+    throw new Error(`Log audit belum aktif (${error.message}). Jalankan supabase/admin-upgrade.sql sebelum mengubah pesanan.`);
+  }
+}
+
+export async function editOrder(formData: FormData) {
+  await requireAdmin();
+  const id = validatedOrderId(formData);
+  const status = text(formData, 'status');
+  const paymentMethod = text(formData, 'payment_method');
+  if (!orderStatuses.includes(status as (typeof orderStatuses)[number])) {
+    throw new Error('Status pesanan tidak valid');
+  }
+  if (paymentMethod && !PAYMENT_METHODS.some((method) => method.value === paymentMethod)) {
+    throw new Error('Metode pembayaran tidak valid');
+  }
+
+  const supabase = await createClient();
+  await requireOrderAuditLog(supabase);
+  const { data, error } = await supabase
+    .from('orders')
+    .update({ status, ...(paymentMethod ? { payment_method: paymentMethod } : {}) })
+    .eq('id', id)
+    .neq('status', 'cancelled')
+    .select('id')
+    .maybeSingle();
+  if (error) throw new Error(`Gagal mengedit pesanan: ${error.message}`);
+  if (!data) throw new Error('Pesanan tidak ditemukan atau sudah dibatalkan');
+  revalidatePath('/admin/cashier');
+  revalidatePath('/admin/history');
+}
+
+export async function deleteOrder(formData: FormData) {
+  await requireAdmin();
+  const id = validatedOrderId(formData);
+  const supabase = await createClient();
+  await requireOrderAuditLog(supabase);
+  const { data, error } = await supabase
+    .from('orders')
+    .update({ status: 'cancelled' })
+    .eq('id', id)
+    .neq('status', 'cancelled')
+    .neq('payment_status', 'paid')
+    .neq('payment_status', 'refunded')
+    .select('id')
+    .maybeSingle();
+  if (error) throw new Error(`Gagal membatalkan pesanan: ${error.message}`);
+  if (!data) throw new Error('Pesanan tidak ditemukan, sudah batal, atau sudah dibayar');
+  revalidatePath('/admin/cashier');
+  revalidatePath('/admin/history');
 }

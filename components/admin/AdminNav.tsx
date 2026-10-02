@@ -1,8 +1,8 @@
 import Link from 'next/link';
 import { logout } from '@/app/admin/actions';
 
-export default function AdminNav({ current }: { current: 'menu' | 'users' | 'cashier' }) {
-  const link = (href: string, label: string, key: 'menu' | 'users' | 'cashier') => (
+export default function AdminNav({ current }: { current: 'menu' | 'users' | 'cashier' | 'history' }) {
+  const link = (href: string, label: string, key: 'menu' | 'users' | 'cashier' | 'history') => (
     <Link
       href={href}
       aria-current={current === key ? 'page' : undefined}
@@ -16,6 +16,7 @@ export default function AdminNav({ current }: { current: 'menu' | 'users' | 'cas
       <nav className="flex gap-2">
         {link('/admin', 'Menu', 'menu')}
         {link('/admin/cashier', 'Kasir', 'cashier')}
+        {link('/admin/history', 'Riwayat', 'history')}
         {link('/admin/users', 'Admin', 'users')}
       </nav>
       <form action={logout}>

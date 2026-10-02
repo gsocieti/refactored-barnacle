@@ -1,5 +1,4 @@
 import { toggleAvailability } from './actions';
-import { syncDriveMenuPhotos } from './drive-sync';
 import { importMenu } from './menu-io';
 import AdminNav from '@/components/admin/AdminNav';
 import ItemForm from '@/components/admin/ItemForm';
@@ -30,22 +29,6 @@ export default async function AdminPage({ searchParams }: { searchParams: Promis
       {notice && (
         <p role="status" className="rounded-lg border-2 border-kuah bg-white p-3 text-sm">{notice}</p>
       )}
-
-      <section className="space-y-3 rounded-2xl border-4 border-kuah bg-white p-4">
-        <div>
-          <h2 className="font-bold">Sinkronkan foto menu dari Google Drive</h2>
-          <p className="mt-1 text-sm leading-6 text-kuah/70">
-            Unggah 10 foto Drive yang sudah dicocokkan berdasarkan isi hidangan dengan menu GoFood, lalu simpan
-            tautannya di Supabase. Menu dan harga tetap. Foto lain yang belum dapat dicocokkan dengan yakin
-            tidak diubah.
-          </p>
-        </div>
-        <form action={syncDriveMenuPhotos}>
-          <button type="submit" className="btn bg-cabai px-4 py-2 text-white">
-            Sinkronkan 10 foto sekarang
-          </button>
-        </form>
-      </section>
 
       <details className="rounded-2xl border-4 border-kuah bg-white">
         <summary className="cursor-pointer p-4 font-bold">Unggah daftar harga (CSV)</summary>

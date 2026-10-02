@@ -1,5 +1,7 @@
 import { markOrderPaid } from '@/app/admin/actions';
 import AdminNav from '@/components/admin/AdminNav';
+import OrderControls from '@/components/admin/OrderControls';
+import { formatJakartaDateTime } from '@/lib/date-format';
 import { PAYMENT_METHODS } from '@/lib/types';
 import { createClient } from '@/lib/supabase/server';
 
@@ -38,6 +40,12 @@ type CashierOrder = {
   }[];
 };
 
+type Approval = { order_id: string; actor_email: string; created_at: string };
+
+function isAuditUnavailable(error: { code: string; message: string }) {
+  return ['42P01', 'PGRST205'].includes(error.code) || /admin_activity_logs/i.test(error.message);
+}
+
 function jakartaDayBounds() {
   const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'Asia/Jakarta',
@@ -59,6 +67,7 @@ export default async function CashierPage() {
   const { start, end } = jakartaDayBounds();
   const orders: CashierOrder[] = [];
   let paymentMethodColumnMissing = false;
+  let auditLogUnavailable = false;
 
   for (let offset = 0; ; offset += 500) {
     const result = await supabase
@@ -97,6 +106,25 @@ export default async function CashierPage() {
     (sum, order) => sum + order.order_items.reduce((itemSum, item) => itemSum + item.quantity, 0),
     0,
   );
+  const approvals = new Map<string, Approval>();
+  const orderIds = orders.map((order) => order.id);
+  if (orderIds.length > 0) {
+    const { data, error } = await supabase
+      .from('admin_activity_logs')
+      .select('order_id, actor_email, created_at')
+      .eq('action', 'approved')
+      .in('order_id', orderIds)
+      .order('created_at', { ascending: true });
+    if (error && isAuditUnavailable(error)) {
+      auditLogUnavailable = true;
+    } else if (error) {
+      throw new Error(`Gagal memuat waktu persetujuan: ${error.message}`);
+    } else {
+      for (const approval of data ?? []) {
+        if (!approvals.has(approval.order_id)) approvals.set(approval.order_id, approval);
+      }
+    }
+  }
 
   return (
     <main className="mx-auto max-w-4xl space-y-6 p-5">
@@ -108,6 +136,11 @@ export default async function CashierPage() {
       {paymentMethodColumnMissing && (
         <p role="status" className="rounded-xl border-2 border-kuah bg-white p-4 text-sm leading-6">
           Kolom metode pembayaran belum tersedia di database. Pesanan tetap ditampilkan; jalankan <code>supabase/admin-upgrade.sql</code> untuk mencatat metode pembayaran.
+        </p>
+      )}
+      {auditLogUnavailable && (
+        <p role="status" className="rounded-xl border-2 border-kuah bg-white p-4 text-sm leading-6">
+          Log persetujuan admin belum tersedia. Jalankan <code>supabase/admin-upgrade.sql</code> untuk mengaktifkan cap waktu approval dan audit.
         </p>
       )}
 
@@ -135,6 +168,7 @@ export default async function CashierPage() {
             {orders.map((order) => {
               const method = PAYMENT_METHODS.find((entry) => entry.value === order.payment_method);
               const quantity = order.order_items.reduce((sum, item) => sum + item.quantity, 0);
+              const approval = approvals.get(order.id);
               return (
                 <li key={order.id} className="rounded-2xl border-4 border-kuah bg-white p-4">
                   <div className="flex flex-wrap items-start justify-between gap-3">
@@ -144,9 +178,14 @@ export default async function CashierPage() {
                         {order.table_number === null ? ' · Takeaway' : ` · Meja ${order.table_number}`}
                       </p>
                       <p className="mt-1 text-sm">
-                        {new Intl.DateTimeFormat('id-ID', { timeZone: 'Asia/Jakarta', dateStyle: 'medium', timeStyle: 'short' }).format(new Date(order.created_at))}
+                        {formatJakartaDateTime(order.created_at)}
                         {' · '}{quantity} item · {method?.label ?? order.payment_method ?? 'Metode belum dicatat'}
                       </p>
+                      {approval && (
+                        <p className="mt-1 text-sm text-kuah/70">
+                          Disetujui {formatJakartaDateTime(approval.created_at)} oleh {approval.actor_email}
+                        </p>
+                      )}
                       <p className="mt-1 text-sm font-semibold">
                         Status: {orderStatus[order.status] ?? order.status} · {paymentStatus[order.payment_status] ?? order.payment_status}
                       </p>
@@ -163,12 +202,20 @@ export default async function CashierPage() {
                     </div>
                     <p className="font-display text-lg font-extrabold">{rupiah(order.total_amount)}</p>
                   </div>
-                  {order.payment_status !== 'paid' && order.payment_status !== 'refunded' && order.status !== 'cancelled' && (
+                  {!auditLogUnavailable && order.payment_status !== 'paid' && order.payment_status !== 'refunded' && order.status !== 'cancelled' && (
                     <form action={markOrderPaid} className="mt-4">
                       <input type="hidden" name="id" value={order.id} />
                       <button type="submit" className="btn bg-cabai px-4 py-2 text-sm text-white">Konfirmasi pembayaran diterima</button>
                     </form>
                   )}
+                  <OrderControls
+                    orderId={order.id}
+                    status={order.status}
+                    paymentMethod={order.payment_method}
+                    paymentMethodAvailable={!paymentMethodColumnMissing}
+                    canCancel={order.payment_status !== 'paid' && order.payment_status !== 'refunded'}
+                    enabled={!auditLogUnavailable}
+                  />
                 </li>
               );
             })}
